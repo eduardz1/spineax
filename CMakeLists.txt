@@ -1,6 +1,15 @@
 cmake_minimum_required(VERSION 3.15...3.27)
 project(${SKBUILD_PROJECT_NAME} LANGUAGES CXX)
 
+# Backend options
+option(SPINEAX_USE_CUDA "Build with CUDA/cuDSS backend" ON)
+option(SPINEAX_USE_BASPACHO "Build with BaSpaCho backend (Metal/OpenCL/CPU)" OFF)
+
+# BaSpaCho path - set this to your baspacho installation
+set(BASPACHO_ROOT "" CACHE PATH "Path to BaSpaCho installation")
+
+if(SPINEAX_USE_CUDA)
+
 # Force all CUDA libraries to be linked dynamically.
 set(CMAKE_CUDA_RUNTIME_LIBRARY Shared)
 
@@ -147,6 +156,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 enable_language(CUDA)
+endif() # SPINEAX_USE_CUDA
 
 # Option to disable pbatch_solve (useful when nvcc version doesn't match CUDA runtime)
 option(BUILD_PBATCH_SOLVE "Build pseudo batch solve module (requires matching nvcc)" ON)
@@ -217,3 +227,103 @@ install(
   LIBRARY
   DESTINATION spineax
 )
+endif() # SPINEAX_USE_CUDA
+
+#==============================================================================
+# BaSpaCho backend (Metal/OpenCL/CPU)
+#==============================================================================
+if(SPINEAX_USE_BASPACHO)
+  message(STATUS "Building BaSpaCho backend")
+
+  # Find BaSpaCho
+  if(BASPACHO_ROOT)
+    set(BASPACHO_INCLUDE_DIR "${BASPACHO_ROOT}")
+    set(BASPACHO_BUILD_DIR "${BASPACHO_ROOT}/build")
+    set(EIGEN_INCLUDE_DIR "${BASPACHO_BUILD_DIR}/_deps/eigen-src")
+
+    # Find baspacho library (static)
+    find_library(BASPACHO_LIBRARY
+      NAMES BaSpaCho BaSpaCho_static baspacho
+      PATHS "${BASPACHO_BUILD_DIR}/baspacho/baspacho" "${BASPACHO_BUILD_DIR}/baspacho" "${BASPACHO_BUILD_DIR}"
+      NO_DEFAULT_PATH
+    )
+
+    if(NOT BASPACHO_LIBRARY)
+      message(FATAL_ERROR "Could not find baspacho library in ${BASPACHO_BUILD_DIR}")
+    endif()
+
+    message(STATUS "Found BaSpaCho: ${BASPACHO_LIBRARY}")
+    message(STATUS "BaSpaCho include: ${BASPACHO_INCLUDE_DIR}")
+
+    # Create imported target (static library)
+    add_library(baspacho STATIC IMPORTED)
+    set_target_properties(baspacho PROPERTIES
+      IMPORTED_LOCATION "${BASPACHO_LIBRARY}"
+      INTERFACE_INCLUDE_DIRECTORIES "${BASPACHO_INCLUDE_DIR}"
+    )
+
+    # BaSpaCho dependencies - find dispenso
+    find_library(DISPENSO_LIBRARY
+      NAMES dispenso
+      PATHS "${BASPACHO_BUILD_DIR}/_deps/dispenso-build/dispenso"
+      NO_DEFAULT_PATH
+    )
+    if(DISPENSO_LIBRARY)
+      message(STATUS "Found dispenso: ${DISPENSO_LIBRARY}")
+    endif()
+  else()
+    message(FATAL_ERROR "BASPACHO_ROOT must be set when SPINEAX_USE_BASPACHO=ON")
+  endif()
+
+  # BaSpaCho solve module
+  nanobind_add_module(baspacho_solve NOMINSIZE
+    src/spineax/cudss/baspacho_solve.cpp
+  )
+
+  target_include_directories(baspacho_solve PRIVATE
+    ${XLA_DIR}
+    ${BASPACHO_INCLUDE_DIR}
+    ${EIGEN_INCLUDE_DIR}
+  )
+
+  # Check for Metal and BLAS support on Apple
+  if(APPLE)
+    find_library(METAL_FRAMEWORK Metal)
+    find_library(FOUNDATION_FRAMEWORK Foundation)
+    find_library(ACCELERATE_FRAMEWORK Accelerate)
+  endif()
+
+  target_link_libraries(baspacho_solve PRIVATE
+    baspacho
+  )
+
+  # Add dispenso if found
+  if(DISPENSO_LIBRARY)
+    target_link_libraries(baspacho_solve PRIVATE ${DISPENSO_LIBRARY})
+  endif()
+
+  # Add BLAS/LAPACK (Accelerate on macOS)
+  if(APPLE AND ACCELERATE_FRAMEWORK)
+    target_link_libraries(baspacho_solve PRIVATE ${ACCELERATE_FRAMEWORK})
+  endif()
+
+  # Enable Metal backend on macOS
+  if(APPLE AND METAL_FRAMEWORK)
+    message(STATUS "Metal framework found - enabling Metal backend")
+    target_compile_definitions(baspacho_solve PRIVATE BASPACHO_USE_METAL)
+    target_link_libraries(baspacho_solve PRIVATE
+      ${METAL_FRAMEWORK}
+      ${FOUNDATION_FRAMEWORK}
+    )
+  endif()
+
+  # Suppress XLA FFI header warnings
+  target_compile_options(baspacho_solve PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:-Wno-return-type -Wno-attributes>
+  )
+
+  install(
+    TARGETS baspacho_solve
+    LIBRARY DESTINATION spineax
+  )
+endif() # SPINEAX_USE_BASPACHO

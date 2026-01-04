@@ -1,4 +1,4 @@
-import functools as ft
+src/spineax/cudss/solver.pyimport functools as ft
 import jax
 import jax.core
 import jax.extend.core
@@ -19,6 +19,14 @@ try:
 except ImportError:
     pbatch_solve = None
     PBATCH_AVAILABLE = False
+
+# baspacho_solve is optional - provides Metal/OpenCL/CPU support via BaSpaCho
+try:
+    from spineax import baspacho_solve
+    _BASPACHO_AVAILABLE = True
+except ImportError:
+    baspacho_solve = None
+    _BASPACHO_AVAILABLE = False
 
 # primitives ===================================================================
 # single
@@ -293,6 +301,11 @@ register_ffi("solve_single_f32", single_solve, type="f32")
 register_ffi("solve_single_f64", single_solve, type="f64")
 register_ffi("solve_single_c64", single_solve, type="c64")
 register_ffi("solve_single_c128", single_solve, type="c128")
+
+# single - Metal/BaSpaCho (f32/f64 only, no complex support yet)
+if _BASPACHO_AVAILABLE:
+    register_ffi("solve_single_f32", baspacho_solve, platform="iree_metal")
+    register_ffi("solve_single_f64", baspacho_solve, platform="iree_metal")
 
 solve_single_f32_low = mlir.lower_fun(solve_single_f32_impl, multiple_results=True)
 mlir.register_lowering(solve_single_f32_p, solve_single_f32_low)
