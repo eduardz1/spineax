@@ -155,11 +155,14 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
 endif()
 
-enable_language(CUDA)
-endif() # SPINEAX_USE_CUDA
-
 # Option to disable pbatch_solve (useful when nvcc version doesn't match CUDA runtime)
+# When OFF, enable_language(CUDA) is not required, so nvcc is not needed.
 option(BUILD_PBATCH_SOLVE "Build pseudo batch solve module (requires matching nvcc)" ON)
+
+if(BUILD_PBATCH_SOLVE)
+  enable_language(CUDA)
+endif()
+endif() # SPINEAX_USE_CUDA
 
 # cuDSS FFI files
 
