@@ -63,6 +63,9 @@ manylinux-aarch64-image = "manylinux_2_28"
 [tool.cibuildwheel.linux]
 # BUILD_PBATCH_SOLVE=OFF avoids needing nvcc; only .cpp modules are built
 environment = { CMAKE_ARGS = "-DBUILD_PBATCH_SOLVE=OFF -DSPINEAX_USE_BASPACHO=OFF" }
+# Exclude NVIDIA/CUDA shared libs from auditwheel — they're provided at runtime
+# by nvidia-cublas-cu12, nvidia-cuda-runtime-cu12, nvidia-cudss-cu12 pip packages
+repair-wheel-command = "auditwheel repair --exclude libcublas.so.12 --exclude libcudart.so.12 --exclude libcudss.so.0 -w {dest_dir} {wheel}"
 
 [tool.setuptools.packages.find]
 where = [
