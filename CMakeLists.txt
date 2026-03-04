@@ -196,9 +196,6 @@ endif()
 foreach(TARGET ${SPINEAX_TARGETS})
   target_include_directories(${TARGET} PRIVATE
     ${XLA_DIR}
-    nvidia::cudss
-    nvidia::cudart
-    nvidia::cublas
     ${ENV_NVIDIA_INCLUDE_DIRS}
   )
 
