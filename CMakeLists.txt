@@ -162,7 +162,6 @@ option(BUILD_PBATCH_SOLVE "Build pseudo batch solve module (requires matching nv
 if(BUILD_PBATCH_SOLVE)
   enable_language(CUDA)
 endif()
-endif() # SPINEAX_USE_CUDA
 
 # cuDSS FFI files
 
