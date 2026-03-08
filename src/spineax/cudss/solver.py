@@ -1,4 +1,4 @@
-src/spineax/cudss/solver.pyimport functools as ft
+import functools as ft
 import jax
 import jax.core
 import jax.extend.core
