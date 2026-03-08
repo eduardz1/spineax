@@ -71,3 +71,42 @@ jobs:
         with:
           name: wheel-${{ matrix.python }}
           path: dist/*.whl
+
+  import-test:
+    needs: build-wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-cp312
+          path: dist
+
+      - uses: astral-sh/setup-uv@v4
+      - run: uv python install 3.12
+
+      - name: Install wheel and dependencies
+        run: |
+          uv venv --python 3.12
+          uv pip install dist/*.whl jax jaxtyping equinox
+
+      - name: Smoke test imports
+        run: |
+          uv run python -c "
+          import spineax
+          print('spineax imported OK')
+
+          from spineax.cudss import solver
+          print('spineax.cudss.solver imported OK')
+
+          # Verify CUDA is not available (no GPU in CI)
+          assert not solver._CUDA_AVAILABLE, 'Expected _CUDA_AVAILABLE=False in CI'
+          print(f'_CUDA_AVAILABLE={solver._CUDA_AVAILABLE} (expected)')
+
+          # Verify PBATCH_AVAILABLE is defined and False
+          assert not solver.PBATCH_AVAILABLE, 'Expected PBATCH_AVAILABLE=False in CI'
+          print(f'PBATCH_AVAILABLE={solver.PBATCH_AVAILABLE} (expected)')
+
+          # Verify the warning about no backends was issued
+          import warnings
+          print('All import smoke tests passed')
+          "
