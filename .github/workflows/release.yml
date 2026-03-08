@@ -25,6 +25,40 @@ jobs:
         with:
           output-dir: dist
 
+      - name: Validate wheel contents
+        run: |
+          for WHEEL in dist/*.whl; do
+            echo "Checking: $WHEEL"
+            MISSING=()
+            for path in \
+              spineax/__init__.py \
+              spineax/cudss/__init__.py \
+              spineax/cudss/solver.py \
+              spineax/cudss/solver_re.py \
+              spineax/baspacho/__init__.py \
+            ; do
+              if ! python3 -c "import zipfile; z=zipfile.ZipFile('$WHEEL'); z.getinfo('$path')" 2>/dev/null; then
+                MISSING+=("$path")
+              fi
+            done
+            if ! python3 -c "
+          import zipfile, sys
+          z = zipfile.ZipFile('$WHEEL')
+          so_files = [n for n in z.namelist() if n.endswith('.so')]
+          if not so_files:
+              sys.exit(1)
+          print(f'  {len(so_files)} compiled module(s)')
+          "; then
+              MISSING+=("*.so (compiled modules)")
+            fi
+            if [ ${#MISSING[@]} -gt 0 ]; then
+              echo "ERROR: Missing in $WHEEL:"
+              printf '  - %s\n' "${MISSING[@]}"
+              exit 1
+            fi
+          done
+          echo "All wheels validated"
+
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.os }}-${{ matrix.arch }}
