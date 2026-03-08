@@ -13,24 +13,20 @@ jax.devices()
 
 # CUDA modules - optional (only available when built with CUDA support)
 _CUDA_AVAILABLE = False
+PBATCH_AVAILABLE = False
 single_solve = None
 batch_solve = None
+pbatch_solve = None
 try:
     from spineax import single_solve, batch_solve
     _CUDA_AVAILABLE = True
-except ImportError:
-    pass
-
-
-if _CUDA_AVAILABLE:
-    # Import the functions that return pointers from our compiled C++
-    from spineax import single_solve, batch_solve
     try:
         from spineax import pbatch_solve
         PBATCH_AVAILABLE = True
     except ImportError:
-        pbatch_solve = None
-        PBATCH_AVAILABLE = False
+        pass
+except ImportError:
+    pass
 
 # baspacho_solve is optional - provides Metal/OpenCL/CPU support via BaSpaCho
 _BASPACHO_AVAILABLE = False
