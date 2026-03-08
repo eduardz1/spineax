@@ -12,7 +12,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "spineax-vajax"
-version = "0.0.2"
+version = "0.0.3"
 requires-python = ">=3.10"
 authors = [
     {name = "John Viljoen"},
