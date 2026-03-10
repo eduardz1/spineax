@@ -5,17 +5,37 @@ project(${SKBUILD_PROJECT_NAME} LANGUAGES CXX)
 option(SPINEAX_USE_CUDA "Build with CUDA/cuDSS backend" ON)
 option(SPINEAX_USE_BASPACHO "Build with BaSpaCho backend (Metal/OpenCL/CPU)" OFF)
 
-# BaSpaCho path - set this to your baspacho installation
-set(BASPACHO_ROOT "" CACHE PATH "Path to BaSpaCho installation")
+# BaSpaCho: set BASPACHO_ROOT for pre-built, or omit to auto-fetch from source
+set(BASPACHO_ROOT "" CACHE PATH "Path to pre-built BaSpaCho (omit to fetch from source)")
 
+#==============================================================================
+# Common dependencies (Python, nanobind, XLA)
+#==============================================================================
+find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
+message(STATUS "Using Python interpreter: ${Python_EXECUTABLE}")
+
+find_package(nanobind CONFIG REQUIRED)
+
+# XLA FFI include directory
+execute_process(
+  COMMAND "${Python_EXECUTABLE}"
+  "-c" "from jax import ffi; print(ffi.include_dir())"
+  OUTPUT_STRIP_TRAILING_WHITESPACE OUTPUT_VARIABLE XLA_DIR)
+message(STATUS "XLA include directory: ${XLA_DIR}")
+
+# Build type
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the type of build." FORCE)
+  set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
+endif()
+
+#==============================================================================
+# CUDA/cuDSS backend
+#==============================================================================
 if(SPINEAX_USE_CUDA)
 
 # Force all CUDA libraries to be linked dynamically.
 set(CMAKE_CUDA_RUNTIME_LIBRARY Shared)
-
-# 1. Find the Python interpreter from your active environment.
-find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
-message(STATUS "Using Python interpreter: ${Python_EXECUTABLE}")
 
 # 2. Use NVIDIA libs from Python site-packages/nvidia/*/ (directories there contain include/ and lib/).
 # --- Derive NVIDIA prefix from CMAKE_PREFIX_PATH ---
@@ -140,21 +160,6 @@ set_target_properties(nvidia::cublas PROPERTIES
   INTERFACE_INCLUDE_DIRECTORIES "${ENV_NVIDIA_INCLUDE_DIRS}"
 )
 
-find_package(nanobind CONFIG REQUIRED)
-
-# XLA
-execute_process(
-  COMMAND "${Python_EXECUTABLE}"
-  "-c" "from jax import ffi; print(ffi.include_dir())"
-  OUTPUT_STRIP_TRAILING_WHITESPACE OUTPUT_VARIABLE XLA_DIR)
-message(STATUS "XLA include directory: ${XLA_DIR}")
-
-# 3 optimization build
-if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
-  set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the type of build." FORCE)
-  set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
-endif()
-
 # Option to disable pbatch_solve (useful when nvcc version doesn't match CUDA runtime)
 # When OFF, enable_language(CUDA) is not required, so nvcc is not needed.
 option(BUILD_PBATCH_SOLVE "Build pseudo batch solve module (requires matching nvcc)" ON)
@@ -227,168 +232,178 @@ install(
   DESTINATION spineax
 )
 
-#==============================================================================
-# BaSpaCho dense solver on CUDA (requires both CUDA and BaSpaCho)
-#==============================================================================
-if(SPINEAX_USE_BASPACHO AND BASPACHO_ROOT)
-  message(STATUS "Building BaSpaCho dense CUDA solver")
-
-  # Find cuSOLVER and cuSPARSE (needed by BaSpaCho's CUDA backend)
-  find_library(ENV_CUSOLVER_PATH
-    NAMES cusolver libcusolver libcusolver.so libcusolver.so.11
-    HINTS ${ENV_NVIDIA_LIB_DIRS}
-    NO_DEFAULT_PATH
-  )
-  find_library(ENV_CUSPARSE_PATH
-    NAMES cusparse libcusparse libcusparse.so libcusparse.so.12
-    HINTS ${ENV_NVIDIA_LIB_DIRS}
-    NO_DEFAULT_PATH
-  )
-
-  if(ENV_CUSOLVER_PATH)
-    message(STATUS "Found libcusolver at: ${ENV_CUSOLVER_PATH}")
-    add_library(nvidia::cusolver SHARED IMPORTED GLOBAL)
-    set_target_properties(nvidia::cusolver PROPERTIES
-      IMPORTED_LOCATION "${ENV_CUSOLVER_PATH}"
-      INTERFACE_INCLUDE_DIRECTORIES "${ENV_NVIDIA_INCLUDE_DIRS}"
-    )
-  endif()
-  if(ENV_CUSPARSE_PATH)
-    message(STATUS "Found libcusparse at: ${ENV_CUSPARSE_PATH}")
-    add_library(nvidia::cusparse SHARED IMPORTED GLOBAL)
-    set_target_properties(nvidia::cusparse PROPERTIES
-      IMPORTED_LOCATION "${ENV_CUSPARSE_PATH}"
-      INTERFACE_INCLUDE_DIRECTORIES "${ENV_NVIDIA_INCLUDE_DIRS}"
-    )
-  endif()
-
-  # BaSpaCho include and library (reuse from BaSpaCho section if already found)
-  if(NOT BASPACHO_INCLUDE_DIR)
-    set(BASPACHO_INCLUDE_DIR "${BASPACHO_ROOT}")
-    set(BASPACHO_BUILD_DIR "${BASPACHO_ROOT}/build")
-    set(EIGEN_INCLUDE_DIR "${BASPACHO_BUILD_DIR}/_deps/eigen-src")
-
-    find_library(BASPACHO_LIBRARY
-      NAMES BaSpaCho BaSpaCho_static baspacho
-      PATHS "${BASPACHO_BUILD_DIR}/baspacho/baspacho" "${BASPACHO_BUILD_DIR}/baspacho" "${BASPACHO_BUILD_DIR}"
-      NO_DEFAULT_PATH
-    )
-    if(NOT BASPACHO_LIBRARY)
-      message(FATAL_ERROR "Could not find baspacho library in ${BASPACHO_BUILD_DIR}")
-    endif()
-    add_library(baspacho STATIC IMPORTED)
-    set_target_properties(baspacho PROPERTIES
-      IMPORTED_LOCATION "${BASPACHO_LIBRARY}"
-      INTERFACE_INCLUDE_DIRECTORIES "${BASPACHO_INCLUDE_DIR}"
-    )
-  endif()
-
-  # GPU kernels require nvcc — enable CUDA if not already enabled
-  if(NOT CMAKE_CUDA_COMPILER)
-    enable_language(CUDA)
-  endif()
-
-  nanobind_add_module(baspacho_dense_solve NOMINSIZE
-    src/spineax/cudss/baspacho_dense_solve.cu
-  )
-
-  target_include_directories(baspacho_dense_solve PRIVATE
-    ${XLA_DIR}
-    ${BASPACHO_INCLUDE_DIR}
-    ${EIGEN_INCLUDE_DIR}
-    ${ENV_NVIDIA_INCLUDE_DIRS}
-  )
-
-  target_link_libraries(baspacho_dense_solve PRIVATE
-    baspacho
-    nvidia::cudart
-    nvidia::cublas
-  )
-  if(ENV_CUSOLVER_PATH)
-    target_link_libraries(baspacho_dense_solve PRIVATE nvidia::cusolver)
-  endif()
-  if(ENV_CUSPARSE_PATH)
-    target_link_libraries(baspacho_dense_solve PRIVATE nvidia::cusparse)
-  endif()
-
-  # Add dispenso if found
-  if(NOT DISPENSO_LIBRARY)
-    find_library(DISPENSO_LIBRARY
-      NAMES dispenso
-      PATHS "${BASPACHO_BUILD_DIR}/_deps/dispenso-build/dispenso"
-      NO_DEFAULT_PATH
-    )
-  endif()
-  if(DISPENSO_LIBRARY)
-    target_link_libraries(baspacho_dense_solve PRIVATE ${DISPENSO_LIBRARY})
-  endif()
-
-  target_compile_options(baspacho_dense_solve PRIVATE
-    $<$<COMPILE_LANGUAGE:CXX>:-Wno-return-type -Wno-attributes>
-    $<$<COMPILE_LANGUAGE:CUDA>:-Wno-return-type --expt-relaxed-constexpr>
-  )
-
-  set_target_properties(baspacho_dense_solve PROPERTIES
-    BUILD_RPATH "${ENV_NVIDIA_BUILD_RPATH}"
-    INSTALL_RPATH "${ENV_NVIDIA_INSTALL_RPATH}"
-    INSTALL_RPATH_USE_LINK_PATH FALSE
-  )
-
-  install(
-    TARGETS baspacho_dense_solve
-    LIBRARY DESTINATION spineax
-  )
-endif() # SPINEAX_USE_CUDA AND SPINEAX_USE_BASPACHO
-
 endif() # SPINEAX_USE_CUDA
 
 #==============================================================================
-# BaSpaCho backend (Metal/OpenCL/CPU)
+# BaSpaCho backend (dense CUDA solver + Metal/OpenCL/CPU solver)
 #==============================================================================
 if(SPINEAX_USE_BASPACHO)
-  message(STATUS "Building BaSpaCho backend")
 
-  # Find BaSpaCho
+  # --- Resolve BaSpaCho dependency (once, shared by all modules) ---
   if(BASPACHO_ROOT)
+    # Use pre-built BaSpaCho from local path
+    message(STATUS "Using pre-built BaSpaCho from: ${BASPACHO_ROOT}")
     set(BASPACHO_INCLUDE_DIR "${BASPACHO_ROOT}")
     set(BASPACHO_BUILD_DIR "${BASPACHO_ROOT}/build")
     set(EIGEN_INCLUDE_DIR "${BASPACHO_BUILD_DIR}/_deps/eigen-src")
 
-    # Find baspacho library (static)
-    find_library(BASPACHO_LIBRARY
+    find_library(BASPACHO_LIBRARY_PATH
       NAMES BaSpaCho BaSpaCho_static baspacho
-      PATHS "${BASPACHO_BUILD_DIR}/baspacho/baspacho" "${BASPACHO_BUILD_DIR}/baspacho" "${BASPACHO_BUILD_DIR}"
+      PATHS "${BASPACHO_BUILD_DIR}/baspacho/baspacho"
+            "${BASPACHO_BUILD_DIR}/baspacho"
+            "${BASPACHO_BUILD_DIR}"
       NO_DEFAULT_PATH
     )
-
-    if(NOT BASPACHO_LIBRARY)
+    if(NOT BASPACHO_LIBRARY_PATH)
       message(FATAL_ERROR "Could not find baspacho library in ${BASPACHO_BUILD_DIR}")
     endif()
 
-    message(STATUS "Found BaSpaCho: ${BASPACHO_LIBRARY}")
-    message(STATUS "BaSpaCho include: ${BASPACHO_INCLUDE_DIR}")
+    if(NOT TARGET BaSpaCho)
+      add_library(BaSpaCho STATIC IMPORTED)
+      set_target_properties(BaSpaCho PROPERTIES
+        IMPORTED_LOCATION "${BASPACHO_LIBRARY_PATH}"
+        INTERFACE_INCLUDE_DIRECTORIES "${BASPACHO_INCLUDE_DIR}"
+      )
+    endif()
 
-    # Create imported target (static library)
-    add_library(baspacho STATIC IMPORTED)
-    set_target_properties(baspacho PROPERTIES
-      IMPORTED_LOCATION "${BASPACHO_LIBRARY}"
-      INTERFACE_INCLUDE_DIRECTORIES "${BASPACHO_INCLUDE_DIR}"
-    )
-
-    # BaSpaCho dependencies - find dispenso
-    find_library(DISPENSO_LIBRARY
-      NAMES dispenso
+    # Find dispenso from BaSpaCho build tree
+    find_library(DISPENSO_LIBRARY NAMES dispenso
       PATHS "${BASPACHO_BUILD_DIR}/_deps/dispenso-build/dispenso"
-      NO_DEFAULT_PATH
-    )
+      NO_DEFAULT_PATH)
     if(DISPENSO_LIBRARY)
       message(STATUS "Found dispenso: ${DISPENSO_LIBRARY}")
     endif()
+
   else()
-    message(FATAL_ERROR "BASPACHO_ROOT must be set when SPINEAX_USE_BASPACHO=ON")
+    # Fetch BaSpaCho from source (auto-fetches SuiteSparse, dispenso, Eigen)
+    message(STATUS "Fetching BaSpaCho from source")
+    include(FetchContent)
+
+    set(BASPACHO_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(BASPACHO_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+
+    # Configure GPU backend based on platform
+    if(SPINEAX_USE_CUDA)
+      set(BASPACHO_USE_CUBLAS ON CACHE BOOL "" FORCE)
+      # Use a reasonable default arch; CI/user can override via BASPACHO_CUDA_ARCHS
+      if(NOT DEFINED CACHE{BASPACHO_CUDA_ARCHS})
+        set(BASPACHO_CUDA_ARCHS "70;80;90" CACHE STRING "" FORCE)
+      endif()
+    else()
+      set(BASPACHO_USE_CUBLAS OFF CACHE BOOL "" FORCE)
+    endif()
+
+    if(APPLE)
+      set(BASPACHO_USE_METAL ON CACHE BOOL "" FORCE)
+    else()
+      set(BASPACHO_USE_METAL OFF CACHE BOOL "" FORCE)
+    endif()
+
+    FetchContent_Declare(
+      baspacho_fetch
+      GIT_REPOSITORY https://github.com/chipflow/baspacho.git
+      GIT_TAG metal-backend
+      GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(baspacho_fetch)
+
+    set(BASPACHO_INCLUDE_DIR "${baspacho_fetch_SOURCE_DIR}")
+    set(EIGEN_INCLUDE_DIR "${eigen_SOURCE_DIR}")
+    # dispenso is bundled into the BaSpaCho static lib
+    set(DISPENSO_LIBRARY "")
   endif()
 
-  # BaSpaCho solve module
+  message(STATUS "BaSpaCho include: ${BASPACHO_INCLUDE_DIR}")
+  message(STATUS "Eigen include: ${EIGEN_INCLUDE_DIR}")
+
+  #--------------------------------------------------------------------------
+  # BaSpaCho dense solver on CUDA
+  #--------------------------------------------------------------------------
+  if(SPINEAX_USE_CUDA)
+    message(STATUS "Building BaSpaCho dense CUDA solver")
+
+    # Find cuSOLVER and cuSPARSE (needed by BaSpaCho CUDA backend)
+    find_library(ENV_CUSOLVER_PATH
+      NAMES cusolver libcusolver libcusolver.so libcusolver.so.11
+      HINTS ${ENV_NVIDIA_LIB_DIRS}
+      NO_DEFAULT_PATH
+    )
+    find_library(ENV_CUSPARSE_PATH
+      NAMES cusparse libcusparse libcusparse.so libcusparse.so.12
+      HINTS ${ENV_NVIDIA_LIB_DIRS}
+      NO_DEFAULT_PATH
+    )
+
+    if(ENV_CUSOLVER_PATH AND NOT TARGET nvidia::cusolver)
+      message(STATUS "Found libcusolver at: ${ENV_CUSOLVER_PATH}")
+      add_library(nvidia::cusolver SHARED IMPORTED GLOBAL)
+      set_target_properties(nvidia::cusolver PROPERTIES
+        IMPORTED_LOCATION "${ENV_CUSOLVER_PATH}"
+        INTERFACE_INCLUDE_DIRECTORIES "${ENV_NVIDIA_INCLUDE_DIRS}"
+      )
+    endif()
+    if(ENV_CUSPARSE_PATH AND NOT TARGET nvidia::cusparse)
+      message(STATUS "Found libcusparse at: ${ENV_CUSPARSE_PATH}")
+      add_library(nvidia::cusparse SHARED IMPORTED GLOBAL)
+      set_target_properties(nvidia::cusparse PROPERTIES
+        IMPORTED_LOCATION "${ENV_CUSPARSE_PATH}"
+        INTERFACE_INCLUDE_DIRECTORIES "${ENV_NVIDIA_INCLUDE_DIRS}"
+      )
+    endif()
+
+    # GPU kernels require nvcc
+    if(NOT CMAKE_CUDA_COMPILER)
+      enable_language(CUDA)
+    endif()
+
+    nanobind_add_module(baspacho_dense_solve NOMINSIZE
+      src/spineax/cudss/baspacho_dense_solve.cu
+    )
+
+    target_include_directories(baspacho_dense_solve PRIVATE
+      ${XLA_DIR}
+      ${BASPACHO_INCLUDE_DIR}
+      ${EIGEN_INCLUDE_DIR}
+      ${ENV_NVIDIA_INCLUDE_DIRS}
+    )
+
+    target_link_libraries(baspacho_dense_solve PRIVATE
+      BaSpaCho
+      nvidia::cudart
+      nvidia::cublas
+    )
+    if(TARGET nvidia::cusolver)
+      target_link_libraries(baspacho_dense_solve PRIVATE nvidia::cusolver)
+    endif()
+    if(TARGET nvidia::cusparse)
+      target_link_libraries(baspacho_dense_solve PRIVATE nvidia::cusparse)
+    endif()
+    if(DISPENSO_LIBRARY)
+      target_link_libraries(baspacho_dense_solve PRIVATE ${DISPENSO_LIBRARY})
+    endif()
+
+    target_compile_options(baspacho_dense_solve PRIVATE
+      $<$<COMPILE_LANGUAGE:CXX>:-Wno-return-type -Wno-attributes>
+      $<$<COMPILE_LANGUAGE:CUDA>:-Wno-return-type --expt-relaxed-constexpr>
+    )
+
+    set_target_properties(baspacho_dense_solve PROPERTIES
+      BUILD_RPATH "${ENV_NVIDIA_BUILD_RPATH}"
+      INSTALL_RPATH "${ENV_NVIDIA_INSTALL_RPATH}"
+      INSTALL_RPATH_USE_LINK_PATH FALSE
+    )
+
+    install(
+      TARGETS baspacho_dense_solve
+      LIBRARY DESTINATION spineax
+    )
+  endif() # SPINEAX_USE_CUDA (BaSpaCho dense)
+
+  #--------------------------------------------------------------------------
+  # BaSpaCho Metal/OpenCL/CPU solver
+  #--------------------------------------------------------------------------
+  message(STATUS "Building BaSpaCho Metal/CPU solver")
+
   nanobind_add_module(baspacho_solve NOMINSIZE
     src/spineax/cudss/baspacho_solve.cpp
   )
@@ -406,11 +421,8 @@ if(SPINEAX_USE_BASPACHO)
     find_library(ACCELERATE_FRAMEWORK Accelerate)
   endif()
 
-  target_link_libraries(baspacho_solve PRIVATE
-    baspacho
-  )
+  target_link_libraries(baspacho_solve PRIVATE BaSpaCho)
 
-  # Add dispenso if found
   if(DISPENSO_LIBRARY)
     target_link_libraries(baspacho_solve PRIVATE ${DISPENSO_LIBRARY})
   endif()
