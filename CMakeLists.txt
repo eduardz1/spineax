@@ -326,16 +326,20 @@ if(SPINEAX_USE_BASPACHO)
   if(SPINEAX_USE_CUDA)
     message(STATUS "Building BaSpaCho dense CUDA solver")
 
-    # Find cuSOLVER and cuSPARSE (needed by BaSpaCho CUDA backend)
+    # Find cuSOLVER and cuSPARSE (needed by BaSpaCho CUDA backend).
+    # Search pip nvidia packages first, then fall back to system CUDA toolkit
+    # (cusolver/cusparse may not be in pip packages but are in cuda-toolkit).
     find_library(ENV_CUSOLVER_PATH
       NAMES cusolver libcusolver libcusolver.so libcusolver.so.11
       HINTS ${ENV_NVIDIA_LIB_DIRS}
-      NO_DEFAULT_PATH
+            ${CMAKE_CUDA_IMPLICIT_LINK_DIRECTORIES}
+            /usr/local/cuda/lib64
     )
     find_library(ENV_CUSPARSE_PATH
       NAMES cusparse libcusparse libcusparse.so libcusparse.so.12
       HINTS ${ENV_NVIDIA_LIB_DIRS}
-      NO_DEFAULT_PATH
+            ${CMAKE_CUDA_IMPLICIT_LINK_DIRECTORIES}
+            /usr/local/cuda/lib64
     )
 
     if(ENV_CUSOLVER_PATH AND NOT TARGET nvidia::cusolver)
