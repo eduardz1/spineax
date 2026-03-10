@@ -383,6 +383,9 @@ if(SPINEAX_USE_BASPACHO)
       ${EIGEN_INCLUDE_DIR}
       ${ENV_NVIDIA_INCLUDE_DIRS}
       ${CMAKE_CURRENT_SOURCE_DIR}/src/spineax/cudss
+      # CUDA toolkit includes needed for BaSpaCho's CudaDefs.h → cublas_v2.h →
+      # cuda_fp16.h → nv/target (not in pip nvidia packages)
+      ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
     )
 
     target_link_libraries(baspacho_dense_solve PRIVATE
