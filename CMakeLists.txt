@@ -308,6 +308,8 @@ if(SPINEAX_USE_BASPACHO)
     FetchContent_MakeAvailable(baspacho_fetch)
 
     set(BASPACHO_INCLUDE_DIR "${baspacho_fetch_SOURCE_DIR}")
+    # eigen was fetched by BaSpaCho — retrieve its source dir into this scope
+    FetchContent_GetProperties(eigen)
     set(EIGEN_INCLUDE_DIR "${eigen_SOURCE_DIR}")
     # dispenso is bundled into the BaSpaCho static lib
     set(DISPENSO_LIBRARY "")
