@@ -217,8 +217,10 @@ static ffi::Error BaspachoGpuExecute(
 // FFI handler definitions
 // ============================================================================
 
-// Execute handler has kCmdBufferCompatible trait so XLA can include it in
-// CUDA command buffers / graph capture, keeping the NR loop GPU-resident.
+// NOTE: kCmdBufferCompatible is NOT set yet. The Execute handler currently
+// calls cudaMalloc (via DevMirror::resizeToAtLeast) which is illegal during
+// CUDA graph capture. Phase 2b.6 will pre-allocate all buffers at Instantiate
+// time and add GPU kernels to replace host-side operations, enabling the trait.
 #define DEFINE_BASPACHO_GPU_FFI_HANDLERS(TypeName, DataType)                     \
   XLA_FFI_DEFINE_HANDLER(kBaspachoGpuInstantiate##TypeName,                     \
                          BaspachoGpuInstantiate<DataType>,                      \
@@ -231,8 +233,7 @@ static ffi::Error BaspachoGpuExecute(
                              .Ctx<ffi::State<BaspachoGpuState<DataType>>>()     \
                              .Arg<ffi::Buffer<DataType>>()                      \
                              .Arg<ffi::Buffer<DataType>>()                      \
-                             .Ret<ffi::Buffer<DataType>>(),                     \
-                         {ffi::Traits::kCmdBufferCompatible});
+                             .Ret<ffi::Buffer<DataType>>());
 
 // Generate handlers for f32 and f64 (no complex for LU dense path)
 DEFINE_BASPACHO_GPU_FFI_HANDLERS(f32, ffi::F32);
