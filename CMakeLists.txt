@@ -390,12 +390,21 @@ if(SPINEAX_USE_BASPACHO)
       ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
     )
 
+    # BaSpaCho static library needs BLAS (dsymm_, dgemm_, etc.)
+    # On Linux this is OpenBLAS; on macOS it's Accelerate (handled in baspacho_solve)
+    if(NOT APPLE)
+      find_package(BLAS REQUIRED)
+    endif()
+
     target_link_libraries(baspacho_dense_solve PRIVATE
       baspacho_dense_kernels
       BaSpaCho
       nvidia::cudart
       nvidia::cublas
     )
+    if(NOT APPLE AND BLAS_LIBRARIES)
+      target_link_libraries(baspacho_dense_solve PRIVATE ${BLAS_LIBRARIES})
+    endif()
     if(TARGET nvidia::cusolver)
       target_link_libraries(baspacho_dense_solve PRIVATE nvidia::cusolver)
     endif()
