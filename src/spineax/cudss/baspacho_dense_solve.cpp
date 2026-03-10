@@ -17,6 +17,10 @@
 #include <algorithm>
 #include <set>
 
+// CUDA runtime MUST come before XLA FFI so PlatformStream<cudaStream_t>
+// specialization is available when ffi.h is parsed.
+#include "cuda_runtime_api.h"
+
 #include "nanobind/nanobind.h"
 #include "xla/ffi/api/ffi.h"
 
