@@ -149,12 +149,12 @@ static ffi::ErrorOr<std::unique_ptr<BaspachoGpuState<T>>> BaspachoGpuInstantiate
     auto& symCtx = state->solver->internalSymbolicContext();
     // maxElimTempSize for the solver (accessed via skel)
     // For fully dense (no sparse elim), this is 0.
-    state->numCtx = symCtx.createNumericCtx<scalar_t>(0, static_cast<scalar_t*>(nullptr));
+    state->numCtx = symCtx.template createNumericCtx<scalar_t>(0, static_cast<scalar_t*>(nullptr));
 
     // For 1×1 blocks, maxDenseBlockSize = 1, totalDensePivots = n
     state->numCtx->preAllocateForLU(1, n);
 
-    state->solveCtx = symCtx.createSolveCtx<scalar_t>(1, static_cast<scalar_t*>(nullptr));
+    state->solveCtx = symCtx.template createSolveCtx<scalar_t>(1, static_cast<scalar_t*>(nullptr));
   }
 
   // ---- 6. Extract device-side accessor metadata ----
