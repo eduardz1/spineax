@@ -281,6 +281,8 @@ if(SPINEAX_USE_BASPACHO)
 
     set(BASPACHO_BUILD_TESTS OFF CACHE BOOL "" FORCE)
     set(BASPACHO_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    # All static libs must be PIC since they're linked into nanobind shared modules
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
     # Configure GPU backend based on platform
     if(SPINEAX_USE_CUDA)
