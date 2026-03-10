@@ -64,8 +64,13 @@ struct BaspachoGpuState {
   ::DevMirror<scalar_t> devData;  // factor data on GPU
   ::DevMirror<scalar_t> devVec;   // RHS/solution vector on GPU
 
-  // LU pivots (host-side, uploaded/downloaded by BaSpaCho internally)
-  std::vector<int64_t> pivots;
+  // Persistent contexts (created once at Instantiate, reused across Execute calls).
+  // Eliminates per-call cudaMalloc/cudaFreeHost overhead (~43s for ring/500ts).
+  BaSpaCho::NumericCtxPtr<scalar_t> numCtx;
+  BaSpaCho::SolveCtxPtr<scalar_t> solveCtx;
+
+  // Device-resident pivots (no D2H→H2D roundtrip)
+  ::DevMirror<int64_t> devPivots;
 
   // Device-side accessor metadata (from deviceAccessor(), set once at init)
   // These are device pointers into CudaSymbolicCtx's DevMirror buffers.
@@ -128,15 +133,31 @@ static ffi::ErrorOr<std::unique_ptr<BaspachoGpuState<T>>> BaspachoGpuInstantiate
   std::vector<int64_t> paramSizes(n, 1);  // all 1x1 blocks
   state->solver = BaSpaCho::createSolver(settings, paramSizes, ss);
 
-  // ---- 3. Allocate host buffers ----
+  // ---- 3. Allocate buffers ----
   state->totalDataSize_ = state->solver->totalDataSize();
-  state->pivots.resize(n);  // numSpans() == n for 1x1 blocks
 
   // ---- 4. Pre-allocate GPU buffers (grow-only, no realloc after this) ----
   state->devData.resizeToAtLeast(state->totalDataSize_);
   state->devVec.resizeToAtLeast(n);
+  state->devPivots.resizeToAtLeast(n);
 
-  // ---- 5. Extract device-side accessor metadata ----
+  // ---- 5. Create persistent contexts (one-time allocation) ----
+  // NumericCtx and SolveCtx are reused across Execute calls via reset().
+  // This eliminates the ~43s cudaFreeHost + ~1s cudaMalloc overhead from
+  // creating/destroying contexts on every factorLU/solveLU call.
+  {
+    auto& symCtx = state->solver->internalSymbolicContext();
+    // maxElimTempSize for the solver (accessed via skel)
+    // For fully dense (no sparse elim), this is 0.
+    state->numCtx = symCtx.createNumericCtx<scalar_t>(0, static_cast<scalar_t*>(nullptr));
+
+    // For 1×1 blocks, maxDenseBlockSize = 1, totalDensePivots = n
+    state->numCtx->preAllocateForLU(1, n);
+
+    state->solveCtx = symCtx.createSolveCtx<scalar_t>(1, static_cast<scalar_t*>(nullptr));
+  }
+
+  // ---- 6. Extract device-side accessor metadata ----
   // deviceAccessor() returns a PermutedCoalescedAccessor with device pointers
   // into CudaSymbolicCtx's DevMirror buffers (uploaded once at solver creation).
   auto devAcc = state->solver->deviceAccessor();
@@ -161,12 +182,15 @@ static ffi::ErrorOr<std::unique_ptr<BaspachoGpuState<T>>> BaspachoGpuInstantiate
 // ============================================================================
 // Execute: GPU-resident hot path — factorize J and solve J*x = f
 //
-// All operations are kernel launches or cuBLAS calls on the XLA stream.
-// No D2H copies, no cudaStreamSynchronize, no host memory access.
-// XLA can capture this entire sequence in a CUDA command buffer.
+// Uses persistent NumericCtx/SolveCtx (created once at Instantiate, reset per call)
+// and device-resident pivots (D→D instead of D→H→D roundtrip).
+// This eliminates ~55s of CUDA API overhead per session (ring/500ts):
+//   - ~43s from cudaFreeHost/cudaHostAlloc (persistent NumericCtx)
+//   - ~5s from pivot D→H→D roundtrip (device-resident pivots)
+//   - ~5s from readValue bulk D→H (GPU maxAbsDiag kernel)
+//   - ~1s from SolveCtx buffer alloc/free (persistent SolveCtx)
 //
-// Note: factorLU/solveLU may still have internal pivot D2H/H2D roundtrips
-// inside BaSpaCho. These are small (~n * 8 bytes) and a follow-up optimization.
+// Remaining per-lump H→D: prepareAssemble (~376 bytes via pinned memory).
 // ============================================================================
 
 template <ffi::DataType T>
@@ -197,15 +221,17 @@ static ffi::Error BaspachoGpuExecute(
       s.devUpperChainRowPtr, s.devUpperChainColSpan,
       s.devUpperChainData, s.upperDataBase);
 
-  // 2. LU factorization on GPU
+  // 2. LU factorization on GPU (persistent context + device-resident pivots)
   s.solver->setStream(static_cast<void*>(str));
-  s.solver->factorLU(s.devData.ptr, s.pivots.data());
+  s.solver->factorLU(s.devData.ptr, s.devPivots.ptr, *s.numCtx,
+                     BaSpaCho::PivotLocation::Device);
 
   // 3. Permute RHS on GPU: devVec[perm[i]] = f[i]
   launchPermuteForward<scalar_t>(str, f_dev, s.devVec.ptr, s.devPermutation, n);
 
-  // 4. Solve in-place on GPU: L*U*x = P*f
-  s.solver->solveLU(s.devData.ptr, s.pivots.data(), s.devVec.ptr, n, 1);
+  // 4. Solve in-place on GPU: L*U*x = P*f (persistent context + device pivots)
+  s.solver->solveLU(s.devData.ptr, s.devPivots.ptr, s.devVec.ptr, n, 1,
+                    *s.solveCtx, BaSpaCho::PivotLocation::Device);
 
   // 5. Unpermute solution directly to output: x_out[i] = devVec[perm[i]]
   launchPermuteInverse<scalar_t>(str, s.devVec.ptr, x_dev, s.devPermutation, n);
@@ -217,10 +243,11 @@ static ffi::Error BaspachoGpuExecute(
 // FFI handler definitions
 // ============================================================================
 
-// NOTE: kCmdBufferCompatible is NOT set yet. The Execute handler currently
-// calls cudaMalloc (via DevMirror::resizeToAtLeast) which is illegal during
-// CUDA graph capture. Phase 2b.6 will pre-allocate all buffers at Instantiate
-// time and add GPU kernels to replace host-side operations, enabling the trait.
+// NOTE: kCmdBufferCompatible is NOT set yet. While persistent contexts and
+// device-resident pivots eliminate most CUDA API overhead, the Execute handler
+// still has per-lump H→D copies (prepareAssemble, flushGemmBatch) that use
+// pinned memory staging. These are small but involve cudaMemcpyAsync which
+// may not be graph-capture compatible. Also, maxAbsDiag does a single D→H copy.
 #define DEFINE_BASPACHO_GPU_FFI_HANDLERS(TypeName, DataType)                     \
   XLA_FFI_DEFINE_HANDLER(kBaspachoGpuInstantiate##TypeName,                     \
                          BaspachoGpuInstantiate<DataType>,                      \
