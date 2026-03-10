@@ -171,7 +171,7 @@ static ffi::ErrorOr<std::unique_ptr<BaspachoGpuState<T>>> BaspachoGpuInstantiate
 
 template <ffi::DataType T>
 static ffi::Error BaspachoGpuExecute(
-    ffi::PlatformStream<cudaStream_t> stream,
+    cudaStream_t stream,
     BaspachoGpuState<T>* state,
     ffi::Buffer<T> J_buf,                // n×n Jacobian (device, row-major)
     ffi::Buffer<T> f_buf,                // n×1 RHS (device)
@@ -180,7 +180,7 @@ static ffi::Error BaspachoGpuExecute(
   using scalar_t = typename BaspachoGpuState<T>::scalar_t;
   auto& s = *state;
   int64_t n = s.n;
-  cudaStream_t str = stream.value();
+  cudaStream_t str = stream;
 
   const scalar_t* J_dev = reinterpret_cast<const scalar_t*>(J_buf.typed_data());
   const scalar_t* f_dev = reinterpret_cast<const scalar_t*>(f_buf.typed_data());
