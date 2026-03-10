@@ -8,12 +8,7 @@
 #pragma once
 
 #include <cstdint>
-
-// Forward-declare cudaStream_t to avoid pulling <cuda_runtime.h> into
-// host-compiler translation units (which triggers nv/target issues).
-// The .cu file includes the full header.
-struct CUstream_st;
-typedef CUstream_st* cudaStream_t;
+#include <cuda_runtime.h>
 
 // Launch dense-to-coalesced scatter kernel on the given CUDA stream.
 // Scatters a row-major n×n Jacobian into BaSpaCho's coalesced block format.

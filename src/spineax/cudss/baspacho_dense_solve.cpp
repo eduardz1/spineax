@@ -57,8 +57,8 @@ struct BaspachoGpuState {
   int64_t n = 0;
 
   // Persistent GPU buffers (DevMirror grow-only: allocates once, reuses)
-  BaSpaCho::DevMirror<scalar_t> devData;  // factor data on GPU
-  BaSpaCho::DevMirror<scalar_t> devVec;   // RHS/solution vector on GPU
+  ::DevMirror<scalar_t> devData;  // factor data on GPU
+  ::DevMirror<scalar_t> devVec;   // RHS/solution vector on GPU
 
   // LU pivots (host-side, uploaded/downloaded by BaSpaCho internally)
   std::vector<int64_t> pivots;

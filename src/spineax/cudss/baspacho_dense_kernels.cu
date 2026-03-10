@@ -10,7 +10,6 @@
  *   3. permuteInverseKernel  — unpermute solution vector back to original ordering
  */
 
-#include <cuda_runtime.h>
 #include "baspacho_dense_kernels.h"
 
 // ============================================================================
