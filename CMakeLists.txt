@@ -283,8 +283,13 @@ if(SPINEAX_USE_BASPACHO AND BASPACHO_ROOT)
     )
   endif()
 
+  # GPU kernels require nvcc — enable CUDA if not already enabled
+  if(NOT CMAKE_CUDA_COMPILER)
+    enable_language(CUDA)
+  endif()
+
   nanobind_add_module(baspacho_dense_solve NOMINSIZE
-    src/spineax/cudss/baspacho_dense_solve.cpp
+    src/spineax/cudss/baspacho_dense_solve.cu
   )
 
   target_include_directories(baspacho_dense_solve PRIVATE
@@ -320,6 +325,7 @@ if(SPINEAX_USE_BASPACHO AND BASPACHO_ROOT)
 
   target_compile_options(baspacho_dense_solve PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wno-return-type -Wno-attributes>
+    $<$<COMPILE_LANGUAGE:CUDA>:-Wno-return-type --expt-relaxed-constexpr>
   )
 
   set_target_properties(baspacho_dense_solve PROPERTIES
