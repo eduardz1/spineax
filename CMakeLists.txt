@@ -353,13 +353,28 @@ if(SPINEAX_USE_BASPACHO)
       )
     endif()
 
-    # GPU kernels require nvcc
+    # GPU kernels require nvcc — compiled separately from the FFI handler
+    # because nvcc cannot parse BaSpaCho/Eigen headers.
     if(NOT CMAKE_CUDA_COMPILER)
       enable_language(CUDA)
     endif()
 
+    # CUDA kernels library (compiled by nvcc, no BaSpaCho/Eigen deps)
+    add_library(baspacho_dense_kernels STATIC
+      src/spineax/cudss/baspacho_dense_kernels.cu
+    )
+    set_target_properties(baspacho_dense_kernels PROPERTIES
+      CUDA_SEPARABLE_COMPILATION ON
+      POSITION_INDEPENDENT_CODE ON
+    )
+    target_include_directories(baspacho_dense_kernels PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/spineax/cudss
+      ${ENV_NVIDIA_INCLUDE_DIRS}
+    )
+
+    # FFI handler module (compiled by host C++ compiler, links BaSpaCho+Eigen)
     nanobind_add_module(baspacho_dense_solve NOMINSIZE
-      src/spineax/cudss/baspacho_dense_solve.cu
+      src/spineax/cudss/baspacho_dense_solve.cpp
     )
 
     target_include_directories(baspacho_dense_solve PRIVATE
@@ -367,9 +382,11 @@ if(SPINEAX_USE_BASPACHO)
       ${BASPACHO_INCLUDE_DIR}
       ${EIGEN_INCLUDE_DIR}
       ${ENV_NVIDIA_INCLUDE_DIRS}
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/spineax/cudss
     )
 
     target_link_libraries(baspacho_dense_solve PRIVATE
+      baspacho_dense_kernels
       BaSpaCho
       nvidia::cudart
       nvidia::cublas
@@ -386,7 +403,6 @@ if(SPINEAX_USE_BASPACHO)
 
     target_compile_options(baspacho_dense_solve PRIVATE
       $<$<COMPILE_LANGUAGE:CXX>:-Wno-return-type -Wno-attributes>
-      $<$<COMPILE_LANGUAGE:CUDA>:-Wno-return-type --expt-relaxed-constexpr>
     )
 
     set_target_properties(baspacho_dense_solve PROPERTIES
