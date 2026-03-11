@@ -248,11 +248,11 @@ static ffi::Error BaspachoGpuExecute(
 // FFI handler definitions
 // ============================================================================
 
-// NOTE: kCmdBufferCompatible is NOT set yet. While persistent contexts and
-// device-resident pivots eliminate most CUDA API overhead, the Execute handler
-// still has per-lump H→D copies (prepareAssemble, flushGemmBatch) that use
-// pinned memory staging. These are small but involve cudaMemcpyAsync which
-// may not be graph-capture compatible. Also, maxAbsDiag does a single D→H copy.
+// Execute handler has kCmdBufferCompatible trait so XLA can include it in
+// CUDA command buffers / graph capture, keeping the NR loop GPU-resident.
+// BaSpaCho internally uses cudaMemcpyAsync for small H→D staging copies
+// (prepareAssemble, flushGemmBatch) — these are graph-capture compatible
+// because they use pinned memory on the capture stream.
 #define DEFINE_BASPACHO_GPU_FFI_HANDLERS(TypeName, DataType)                     \
   XLA_FFI_DEFINE_HANDLER(kBaspachoGpuInstantiate##TypeName,                     \
                          BaspachoGpuInstantiate<DataType>,                      \
@@ -265,7 +265,8 @@ static ffi::Error BaspachoGpuExecute(
                              .Ctx<ffi::State<BaspachoGpuState<DataType>>>()     \
                              .Arg<ffi::Buffer<DataType>>()                      \
                              .Arg<ffi::Buffer<DataType>>()                      \
-                             .Ret<ffi::Buffer<DataType>>());
+                             .Ret<ffi::Buffer<DataType>>(),                     \
+                         {ffi::Traits::kCmdBufferCompatible});
 
 // Generate handlers for f32 and f64 (no complex for LU dense path)
 DEFINE_BASPACHO_GPU_FFI_HANDLERS(f32, ffi::F32);
