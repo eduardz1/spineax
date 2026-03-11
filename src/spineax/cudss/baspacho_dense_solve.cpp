@@ -128,7 +128,12 @@ static ffi::ErrorOr<std::unique_ptr<BaspachoGpuState<T>>> BaspachoGpuInstantiate
   settings.findSparseEliminationRanges = false;  // fully dense, no sparse elim
   settings.addFillPolicy = BaSpaCho::AddFillComplete;
   settings.numThreads = 1;              // GPU factorization
-  settings.staticPivotThreshold = 0.0;  // auto threshold
+  // Disable static pivot perturbation: SPICE Jacobians from NR are well-conditioned
+  // and don't need perturbation. Perturbation was modifying the matrix, preventing
+  // NR convergence (1665 iters vs cuSOLVER's 512). Disabling also eliminates two
+  // synchronous cudaMemcpy D→H calls (maxAbsDiag result + perturbCount) that block
+  // CUDA graph capture for the NR while_loop.
+  settings.staticPivotThreshold = -1.0;  // disabled
 
   std::vector<int64_t> paramSizes(n, 1);  // all 1x1 blocks
   state->solver = BaSpaCho::createSolver(settings, paramSizes, ss);
