@@ -147,6 +147,11 @@ static ffi::ErrorOr<std::unique_ptr<BaspachoGpuState<T>>> BaspachoGpuInstantiate
   // creating/destroying contexts on every factorLU/solveLU call.
   {
     auto& symCtx = state->solver->internalSymbolicContext();
+
+    // Disable OpStat timers — each enabled timer calls cudaStreamSynchronize(0)
+    // in its destructor for wall-clock timing. With ~45 timers per factorization
+    // × 47 lumps × 1665 NR iterations = ~90K unnecessary GPU syncs (~47s).
+    symCtx.disableAllStats();
     // maxElimTempSize for the solver (accessed via skel)
     // For fully dense (no sparse elim), this is 0.
     state->numCtx = symCtx.template createNumericCtx<scalar_t>(0, static_cast<scalar_t*>(nullptr));
