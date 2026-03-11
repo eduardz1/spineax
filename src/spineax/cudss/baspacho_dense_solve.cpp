@@ -167,6 +167,19 @@ static ffi::ErrorOr<std::unique_ptr<BaspachoGpuState<T>>> BaspachoGpuInstantiate
     state->solveCtx = symCtx.template createSolveCtx<scalar_t>(1, static_cast<scalar_t*>(nullptr));
   }
 
+  // ---- 5b. Recording pass: capture GemmWorkItem schedule ----
+  // Run factorLU with all GPU operations as no-ops to record the
+  // GemmWorkItem dispatch schedule (structure-dependent, never changes
+  // between NR iterations). After endRecording(), items are uploaded
+  // to device and dispatched from there during Execute, eliminating
+  // per-lump CPU→GPU transfers that block CUDA graph capture.
+  {
+    state->numCtx->beginRecording();
+    state->solver->factorLU(state->devData.ptr, state->devPivots.ptr,
+                            *state->numCtx, BaSpaCho::PivotLocation::Device);
+    state->numCtx->endRecording();
+  }
+
   // ---- 6. Extract device-side accessor metadata ----
   // deviceAccessor() returns a PermutedCoalescedAccessor with device pointers
   // into CudaSymbolicCtx's DevMirror buffers (uploaded once at solver creation).
@@ -192,15 +205,11 @@ static ffi::ErrorOr<std::unique_ptr<BaspachoGpuState<T>>> BaspachoGpuInstantiate
 // ============================================================================
 // Execute: GPU-resident hot path — factorize J and solve J*x = f
 //
-// Uses persistent NumericCtx/SolveCtx (created once at Instantiate, reset per call)
-// and device-resident pivots (D→D instead of D→H→D roundtrip).
-// This eliminates ~55s of CUDA API overhead per session (ring/500ts):
-//   - ~43s from cudaFreeHost/cudaHostAlloc (persistent NumericCtx)
-//   - ~5s from pivot D→H→D roundtrip (device-resident pivots)
-//   - ~5s from readValue bulk D→H (GPU maxAbsDiag kernel)
-//   - ~1s from SolveCtx buffer alloc/free (persistent SolveCtx)
-//
-// Remaining per-lump H→D: prepareAssemble (~376 bytes via pinned memory).
+// Uses persistent NumericCtx/SolveCtx (created once at Instantiate, reset per call),
+// device-resident pivots (D→D instead of D→H→D), GPU prepareAssemble kernel
+// (no H→D copy), and pre-computed GemmWorkItems (dispatched from device buffer).
+// The entire factorLU/solveLU hot path is CUDA graph capture compatible —
+// no cudaMalloc, cudaFreeHost, synchronous cudaMemcpy, or stream-0 operations.
 // ============================================================================
 
 template <ffi::DataType T>
@@ -255,9 +264,12 @@ static ffi::Error BaspachoGpuExecute(
 
 // Execute handler has kCmdBufferCompatible trait so XLA can include it in
 // CUDA command buffers / graph capture, keeping the NR loop GPU-resident.
-// BaSpaCho internally uses cudaMemcpyAsync for small H→D staging copies
-// (prepareAssemble, flushGemmBatch) — these are graph-capture compatible
-// because they use pinned memory on the capture stream.
+// All BaSpaCho operations in the hot path are graph-capture compatible:
+// - prepareAssemble: GPU kernel (reads device-resident skeleton arrays)
+// - flushGemmBatch: dispatches from pre-computed device buffer
+// - getrf: custom LU kernel (no cuSOLVER)
+// - trsm: cuBLAS (graph-compatible)
+// - beginDenseOps: cudaEvent on sym.stream_ (graph-compatible)
 #define DEFINE_BASPACHO_GPU_FFI_HANDLERS(TypeName, DataType)                     \
   XLA_FFI_DEFINE_HANDLER(kBaspachoGpuInstantiate##TypeName,                     \
                          BaspachoGpuInstantiate<DataType>,                      \
