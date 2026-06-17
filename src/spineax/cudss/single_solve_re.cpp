@@ -267,16 +267,16 @@ static ffi::Error CudssExecute(
 
         // CuDSS structures creation
         CUDSS_CALL_AND_CHECK(cudssMatrixCreateDn(&state->b, state->n, state->nrhs, state->n,
-            b_values_buf.typed_data(), state->cuda_dtype, CUDSS_LAYOUT_COL_MAJOR), state->status, "cudssMatrixCreateDn for b");
+            b_values_buf.typed_data(), static_cast<cudssDataType_t>(state->cuda_dtype), CUDSS_LAYOUT_COL_MAJOR), state->status, "cudssMatrixCreateDn for b");
 
         CUDSS_CALL_AND_CHECK(cudssMatrixCreateDn(&state->x, state->n, state->nrhs, state->n,
-            out_values_buf->typed_data(), state->cuda_dtype, CUDSS_LAYOUT_COL_MAJOR), state->status, "cudssMatrixCreateDn for x");
+            out_values_buf->typed_data(), static_cast<cudssDataType_t>(state->cuda_dtype), CUDSS_LAYOUT_COL_MAJOR), state->status, "cudssMatrixCreateDn for x");
 
         CUDSS_CALL_AND_CHECK(cudssMatrixCreateCsr(&state->A, state->n, state->n, state->nnz,
             offsets_buf.typed_data(), NULL,
             columns_buf.typed_data(),
             csr_values_buf.typed_data(),
-            CUDA_R_32I, state->cuda_dtype,
+            static_cast<cudssDataType_t>(CUDA_R_32I), static_cast<cudssDataType_t>(CUDA_R_32I), static_cast<cudssDataType_t>(state->cuda_dtype),
             state->mtype, state->mview, state->base), state->status, "cudssMatrixCreateCsr");
 
         // CuDSS config
@@ -411,8 +411,8 @@ static ffi::Error CudssExecute(
     const int nd_nlevels = 10;  // default
     const int etree_size = (1 << nd_nlevels) - 1;  // 1023
 
-    state->status = cudssDataGet(state->handle, state->data, CUDSS_DATA_ELIMINATION_TREE, 
-        elimination_tree_buf->typed_data(), etree_size * sizeof(int32_t), 
+    state->status = cudssDataGet(state->handle, state->data, CUDSS_DATA_ND_PARTITION_TREE,
+        elimination_tree_buf->typed_data(), etree_size * sizeof(int32_t),
         &state->sizeWritten);
 
     return ffi::Error::Success();

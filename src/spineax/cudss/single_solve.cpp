@@ -268,16 +268,16 @@ static ffi::Error CudssExecute(
 
         // CuDSS structures creation
         CUDSS_CALL_AND_CHECK(cudssMatrixCreateDn(&state->b, state->n, state->nrhs, state->n,
-            b_values_buf.typed_data(), state->cuda_dtype, CUDSS_LAYOUT_COL_MAJOR), state->status, "cudssMatrixCreateDn for b");
+            b_values_buf.typed_data(), static_cast<cudssDataType_t>(state->cuda_dtype), CUDSS_LAYOUT_COL_MAJOR), state->status, "cudssMatrixCreateDn for b");
 
         CUDSS_CALL_AND_CHECK(cudssMatrixCreateDn(&state->x, state->n, state->nrhs, state->n,
-            out_values_buf->typed_data(), state->cuda_dtype, CUDSS_LAYOUT_COL_MAJOR), state->status, "cudssMatrixCreateDn for x");
+            out_values_buf->typed_data(), static_cast<cudssDataType_t>(state->cuda_dtype), CUDSS_LAYOUT_COL_MAJOR), state->status, "cudssMatrixCreateDn for x");
 
         CUDSS_CALL_AND_CHECK(cudssMatrixCreateCsr(&state->A, state->n, state->n, state->nnz,
             offsets_buf.typed_data(), NULL,
             columns_buf.typed_data(),
             csr_values_buf.typed_data(),
-            CUDA_R_32I, state->cuda_dtype,
+            static_cast<cudssDataType_t>(CUDA_R_32I), static_cast<cudssDataType_t>(CUDA_R_32I), static_cast<cudssDataType_t>(state->cuda_dtype),
             state->mtype, state->mview, state->base), state->status, "cudssMatrixCreateCsr");
 
         // CuDSS config — iterative refinement
