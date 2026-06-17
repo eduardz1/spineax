@@ -12,7 +12,7 @@ jobs:
   build-wheel:
     strategy:
       matrix:
-        python: ["cp312"]
+        python: ["cp312", "cp313t", "cp314t"]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -74,19 +74,32 @@ jobs:
 
   import-test:
     needs: build-wheel
+    strategy:
+      matrix:
+        python: ["cp312", "cp313t", "cp314t"]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: wheel-cp312
+          name: wheel-${{ matrix.python }}
           path: dist
 
       - uses: astral-sh/setup-uv@v4
-      - run: uv python install 3.12
+
+      - name: Map python version
+        id: pyver
+        run: |
+          case "${{ matrix.python }}" in
+            cp312) echo "VER=3.12" >> $GITHUB_OUTPUT ;;
+            cp313t) echo "VER=3.13t" >> $GITHUB_OUTPUT ;;
+            cp314t) echo "VER=3.14t" >> $GITHUB_OUTPUT ;;
+          esac
+
+      - run: uv python install ${{ steps.pyver.outputs.VER }}
 
       - name: Install wheel and dependencies
         run: |
-          uv venv --python 3.12
+          uv venv --python ${{ steps.pyver.outputs.VER }}
           uv pip install dist/*.whl jax jaxtyping equinox
 
       - name: Smoke test imports
